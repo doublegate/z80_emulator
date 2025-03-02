@@ -61,16 +61,9 @@ fn main() {
     let max_cycles = 1000;
     let mut cycles = 0;
     while !cpu.is_halted() && cycles < max_cycles {
-<<<<<<< HEAD
         // println!("Program Counter (before step): {}", cpu.get_pc());
         cpu.step(&mut memory, &mut io);
         // println!("Program Counter (after step): {}", cpu.get_pc());
-=======
-        let current_pc = cpu.get_pc();
-        // println!("Program Counter (before step): {current_pc}");
-        cpu.step(&mut memory, &mut io);
-        // println!("Program Counter (after step): {current_pc}");
->>>>>>> 9c46f60fd69dfcd725c973ee1a5e7626ff813508
         cycles += 1;
         println!(
             "PC: 0x{:04X}, A: {:02X}, B: {:02X}, HL: 0x{:04X}",
