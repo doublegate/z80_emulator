@@ -1,6 +1,6 @@
 [package]
-name = "rust-z80"
-version = "0.1.0"
+name = "z80_emulator"
+version = "0.2.0"
 authors = ["DoubleGate <parobek@gmail.com>"]
 edition = "2021"
 license = "MIT"
@@ -9,3 +9,7 @@ keywords = ["z80", "emulator", "rust", "cpu", "retrocomputing"]
 repository = "https://github.com/doublegate/z80-emulator"
 
 [dependencies]
+
+[lib]
+name = "z80_emulator"
+path = "src/lib.rs"
