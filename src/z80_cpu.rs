@@ -404,6 +404,14 @@ impl Z80 {
             }, // LD (nn), HL
 
             // Increment register H, setting S, Z, H, PV flags (N reset, C unaffected)
+            0x23 => {
+                let hl = self.registers.get_hl();       // Get current HL value
+                let new_hl = hl.wrapping_add(1);        // Increment with wrapping
+                self.registers.set_hl(new_hl);          // Set new HL value
+                6                                       // Return 6 cycles
+            }, // INC HL
+
+            // Increment register H, setting S, Z, H, PV flags (N reset, C unaffected)
             0x24 => { self.registers.h = self.inc_8bit(self.registers.h); 4 }, // INC H
 
             // Decrement register H, setting S, Z, H, PV flags (N set, C unaffected)
