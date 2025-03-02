@@ -1,0 +1,11 @@
+[package]
+name = "rust-z80"
+version = "0.1.0"
+authors = ["DoubleGate <parobek@gmail.com>"]
+edition = "2021"
+license = "MIT"
+description = "A cycle-accurate Zilog Z80 CPU emulator written in Rust."
+keywords = ["z80", "emulator", "rust", "cpu", "retrocomputing"]
+repository = "https://github.com/doublegate/z80-emulator"
+
+[dependencies]
