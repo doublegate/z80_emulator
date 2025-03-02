@@ -1,0 +1,87 @@
+; Address 0x0000
+; Initialize array at 0x1000: [10, 20, 30, 40, 50]
+00:  21 00 10    LD HL, 0x1000    ; HL = array start
+03:  36 0A       LD (HL), 10      ; array[0] = 10
+05:  23          INC HL
+06:  36 14       LD (HL), 20      ; array[1] = 20
+08:  23          INC HL
+09:  36 1E       LD (HL), 30      ; array[2] = 30
+0B:  23          INC HL
+0C:  36 28       LD (HL), 40      ; array[3] = 40
+0E:  23          INC HL
+0F:  36 32       LD (HL), 50      ; array[4] = 50
+
+; Initialize sum storage at 0x2000
+11:  21 00 20    LD HL, 0x2000
+14:  36 00       LD (HL), 0       ; sum = 0
+
+; Call subroutine to sum array
+16:  CD 30 00    CALL 0x0030      ; Sum subroutine
+
+; Find max and min in array
+19:  21 00 10    LD HL, 0x1000    ; HL = array start
+1C:  06 05       LD B, 5          ; B = array length
+1E:  3E 00       LD A, 0          ; A = initial max
+20:  16 FF       LD D, 0xFF       ; D = initial min
+22:  0E 00       LD C, 0          ; C = index counter
+
+; Loop to find max and min
+24:  5E          LD E, (HL)       ; E = array element
+25:  BB          CP E             ; Compare A with E (max)
+26:  30 02       JR NC, +2        ; If A >= E, skip
+28:  7B          LD A, E          ; Update max
+29:  7A          LD A, D          ; Load min into A
+2A:  BB          CP E             ; Compare with E (min)
+2B:  38 02       JR C, +2         ; If D < E, skip
+2D:  7B          LD D, E          ; Update min
+2E:  23          INC HL           ; Next element
+2F:  0C          INC C            ; Increment index
+30:  10 F2       DJNZ -14         ; Loop until B=0
+
+; Store results
+32:  21 01 20    LD HL, 0x2001    ; HL = result storage
+35:  77          LD (HL), A       ; Store max
+36:  23          INC HL
+37:  72          LD (HL), D       ; Store min
+
+; Test stack with nested calls
+38:  CD 50 00    CALL 0x0050      ; Nested subroutine
+
+; Test I/O operations
+3B:  3E AA       LD A, 0xAA       ; Value to output
+3D:  D3 10       OUT (0x10), A    ; Output to port 0x10
+3F:  DB 10       IN A, (0x10)     ; Input from port 0x10
+
+; Test bit operations
+41:  CB 40       BIT 0, B         ; Test bit 0 of B
+43:  CB C8       SET 1, B         ; Set bit 1 of B
+45:  CB 80       RES 0, B         ; Reset bit 0 of B
+
+; Test interrupts
+47:  FB          EI               ; Enable interrupts
+48:  76          HALT             ; Wait for interrupt
+
+; Subroutine: Sum array elements (at 0x0030)
+30:  21 00 10    LD HL, 0x1000    ; HL = array start
+33:  06 05       LD B, 5          ; B = array length
+35:  3E 00       LD A, 0          ; A = sum accumulator
+37:  86          ADD A, (HL)      ; Add array element
+38:  23          INC HL           ; Next element
+39:  10 FD       DJNZ -3          ; Loop until B=0
+3B:  32 00 20    LD (0x2000), A   ; Store sum
+3E:  C9          RET              ; Return
+
+; Nested subroutine (at 0x0050)
+50:  CD 60 00    CALL 0x0060      ; Inner subroutine
+53:  C9          RET              ; Return
+
+; Inner subroutine (at 0x0060)
+60:  3E 55       LD A, 0x55       ; Set A to 0x55
+62:  C9          RET              ; Return
+
+; Additional edge case testing (e.g., overflow)
+63:  3E FF       LD A, 0xFF       ; Max value
+65:  C6 01       ADD A, 1         ; Test overflow (Carry flag)
+67:  01 FF FF    LD BC, 0xFFFF    ; Max 16-bit value
+6A:  03          INC BC           ; Test 16-bit overflow
+6B:  00          NOP              ; Padding
