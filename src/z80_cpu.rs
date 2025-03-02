@@ -222,80 +222,973 @@ impl Z80 {
     /// Executes the given opcode, returning the number of cycles.
     pub fn execute(&mut self, opcode: u8, memory: &mut dyn Memory, io: &mut dyn IoDevice) -> u8 {
         match opcode {
-            
+            // No Operation: Does nothing, takes 4 cycles
             0x00 => 4, // NOP
+
+            // Load BC with immediate 16-bit value nn from memory (PC+1, PC+2)
             0x01 => { let nn = self.fetch_word(memory); self.registers.set_bc(nn); 10 }, // LD BC, nn
+
+            // Store accumulator A to memory location pointed to by BC
             0x02 => { memory.write(self.registers.get_bc(), self.registers.a); 7 }, // LD (BC), A
-            0x06 => { // LD B, n
+
+            // Increment register B, setting S, Z, H, PV flags (N reset, C unaffected)
+            0x04 => { self.registers.b = self.inc_8bit(self.registers.b); 4 }, // INC B
+
+            // Decrement register B, setting S, Z, H, PV flags (N set, C unaffected)
+            0x05 => { self.registers.b = self.dec_8bit(self.registers.b); 4 }, // DEC B
+
+            // Load register B with immediate 8-bit value n from memory (PC+1)
+            0x06 => {
                 let n = self.fetch_byte(memory); // Fetch the immediate value
                 self.registers.b = n;            // Load it into register B
                 7                                // Return the number of cycles
-            },
+            }, // LD B, n
+
+            // Rotate Left Circular Accumulator: Bit 7 to bit 0 and C flag, H/N reset
+            0x07 => {
+                let a = self.registers.a;
+                let carry = (a & 0x80) != 0;
+                self.registers.a = (a << 1) | if carry { 1 } else { 0 };
+                self.registers.set_flag(FLAG_H, false);
+                self.registers.set_flag(FLAG_N, false);
+                self.registers.set_flag(FLAG_C, carry);
+                4
+            }, // RLCA
+
+            // Exchange AF with AF': Swap accumulator and flags with shadow registers
+            0x08 => {
+                let temp_a = self.registers.a;
+                let temp_f = self.registers.f;
+                self.registers.a = self.registers.a_alt;
+                self.registers.f = self.registers.f_alt;
+                self.registers.a_alt = temp_a;
+                self.registers.f_alt = temp_f;
+                4
+            }, // EX AF, AF'
+
+            // Add 16-bit register pair BC to HL, setting H and C flags (others unaffected)
+            0x09 => {
+                let hl = self.registers.get_hl();
+                let bc = self.registers.get_bc();
+                let (result, carry) = hl.overflowing_add(bc);
+                let half_carry = ((hl & 0x0FFF) + (bc & 0x0FFF)) > 0x0FFF;
+                self.registers.set_hl(result);
+                self.registers.set_flag(FLAG_H, half_carry);
+                self.registers.set_flag(FLAG_N, false);
+                self.registers.set_flag(FLAG_C, carry);
+                11
+            }, // ADD HL, BC
+
+            // Load accumulator A from memory location pointed to by BC
+            0x0A => {
+                let bc = self.registers.get_bc();
+                self.registers.a = memory.read(bc);
+                7
+            }, // LD A, (BC)
+
+            // Increment register C, setting S, Z, H, PV flags (N reset, C unaffected)
+            0x0C => { self.registers.c = self.inc_8bit(self.registers.c); 4 }, // INC C
+
+            // Decrement register C, setting S, Z, H, PV flags (N set, C unaffected)
+            0x0D => { self.registers.c = self.dec_8bit(self.registers.c); 4 }, // DEC C
+
+            // Load register C with immediate 8-bit value n from memory (PC+1)
             0x0E => { self.registers.c = self.fetch_byte(memory); 7 }, // LD C, n
+
+            // Rotate Right Circular Accumulator: Bit 0 to bit 7 and C flag, H/N reset
+            0x0F => {
+                let a = self.registers.a;
+                let carry = (a & 0x01) != 0;
+                self.registers.a = (a >> 1) | if carry { 0x80 } else { 0 };
+                self.registers.set_flag(FLAG_H, false);
+                self.registers.set_flag(FLAG_N, false);
+                self.registers.set_flag(FLAG_C, carry);
+                4
+            }, // RRCA
+
+            // Decrement B and jump relative if B != 0 (e is signed offset from PC+2)
+            0x10 => {
+                self.registers.b = self.registers.b.wrapping_sub(1);
+                let e = self.fetch_byte(memory) as i8;
+                if self.registers.b != 0 {
+                    self.registers.pc = self.registers.pc.wrapping_add(e as u16);
+                    13
+                } else {
+                    8
+                }
+            }, // DJNZ e
+
+            // Load DE with immediate 16-bit value nn from memory (PC+1, PC+2)
+            0x11 => { let nn = self.fetch_word(memory); self.registers.set_de(nn); 10 }, // LD DE, nn
+
+            // Store accumulator A to memory location pointed to by DE
+            0x12 => { memory.write(self.registers.get_de(), self.registers.a); 7 }, // LD (DE), A
+
+            // Increment register D, setting S, Z, H, PV flags (N reset, C unaffected)
+            0x14 => { self.registers.d = self.inc_8bit(self.registers.d); 4 }, // INC D
+
+            // Decrement register D, setting S, Z, H, PV flags (N set, C unaffected)
+            0x15 => { self.registers.d = self.dec_8bit(self.registers.d); 4 }, // DEC D
+
+            // Load register D with immediate 8-bit value n from memory (PC+1)
+            0x16 => { let n = self.fetch_byte(memory); self.registers.d = n; 7 }, // LD D, n
+
+            // Rotate Left Accumulator through Carry: Bit 7 to C, C to bit 0, H/N reset
+            0x17 => {
+                let a = self.registers.a;
+                let old_carry = if self.registers.get_flag(FLAG_C) { 1 } else { 0 };
+                let new_carry = (a & 0x80) != 0;
+                self.registers.a = (a << 1) | old_carry;
+                self.registers.set_flag(FLAG_H, false);
+                self.registers.set_flag(FLAG_N, false);
+                self.registers.set_flag(FLAG_C, new_carry);
+                4
+            }, // RLA
+
+            // Jump relative: Add signed offset e to PC (PC+2 + e)
+            0x18 => {
+                let e = self.fetch_byte(memory) as i8;
+                self.registers.pc = self.registers.pc.wrapping_add(e as u16);
+                12
+            }, // JR e
+
+            // Load accumulator A from memory location pointed to by DE
+            0x1A => {
+                let de = self.registers.get_de();
+                self.registers.a = memory.read(de);
+                7
+            }, // LD A, (DE)
+
+            // Increment register E, setting S, Z, H, PV flags (N reset, C unaffected)
+            0x1C => { self.registers.e = self.inc_8bit(self.registers.e); 4 }, // INC E
+
+            // Decrement register E, setting S, Z, H, PV flags (N set, C unaffected)
+            0x1D => { self.registers.e = self.dec_8bit(self.registers.e); 4 }, // DEC E
+
+            // Load register E with immediate 8-bit value n from memory (PC+1)
+            0x1E => { let n = self.fetch_byte(memory); self.registers.e = n; 7 }, // LD E, n
+
+            // Rotate Right Accumulator through Carry: Bit 0 to C, C to bit 7, H/N reset
+            0x1F => {
+                let a = self.registers.a;
+                let old_carry = if self.registers.get_flag(FLAG_C) { 0x80 } else { 0 };
+                let new_carry = (a & 0x01) != 0;
+                self.registers.a = (a >> 1) | old_carry;
+                self.registers.set_flag(FLAG_H, false);
+                self.registers.set_flag(FLAG_N, false);
+                self.registers.set_flag(FLAG_C, new_carry);
+                4
+            }, // RRA
+
+            // Jump relative if Zero flag is reset (NZ): PC+2 + e if Z = 0
+            0x20 => {
+                let e = self.fetch_byte(memory) as i8;
+                if !self.registers.get_flag(FLAG_Z) {
+                    self.registers.pc = self.registers.pc.wrapping_add(e as u16);
+                    12
+                } else {
+                    7
+                }
+            }, // JR NZ, e
+
+            // Load HL with immediate 16-bit value nn from memory (PC+1, PC+2)
             0x21 => { let nn = self.fetch_word(memory); self.registers.set_hl(nn); 10 }, // LD HL, nn
+
+            // Store HL to memory at address nn (little-endian: L at nn, H at nn+1)
+            0x22 => {
+                let nn = self.fetch_word(memory);
+                let hl = self.registers.get_hl();
+                memory.write(nn, (hl & 0xFF) as u8);
+                memory.write(nn.wrapping_add(1), (hl >> 8) as u8);
+                16
+            }, // LD (nn), HL
+
+            // Increment register H, setting S, Z, H, PV flags (N reset, C unaffected)
+            0x24 => { self.registers.h = self.inc_8bit(self.registers.h); 4 }, // INC H
+
+            // Decrement register H, setting S, Z, H, PV flags (N set, C unaffected)
+            0x25 => { self.registers.h = self.dec_8bit(self.registers.h); 4 }, // DEC H
+
+            // Load register H with immediate 8-bit value n from memory (PC+1)
+            0x26 => { let n = self.fetch_byte(memory); self.registers.h = n; 7 }, // LD H, n
+
+            // Decimal Adjust Accumulator: Adjust A for BCD arithmetic after ADD/SUB
+            0x27 => {
+                let mut a = self.registers.a;
+                let mut correction = 0;
+                let carry = self.registers.get_flag(FLAG_C);
+                let half_carry = self.registers.get_flag(FLAG_H);
+                let subtract = self.registers.get_flag(FLAG_N);
+
+                if half_carry || (!subtract && (a & 0x0F) > 9) {
+                    correction |= 0x06;
+                }
+                if carry || (!subtract && a > 0x99) || (subtract && ((a & 0xF0) > 0x90)) {
+                    correction |= 0x60;
+                }
+                if subtract {
+                    a = a.wrapping_sub(correction);
+                } else {
+                    a = a.wrapping_add(correction);
+                }
+                let new_carry = carry || (correction & 0x60) != 0;
+                self.registers.set_flag(FLAG_S, a & 0x80 != 0);
+                self.registers.set_flag(FLAG_Z, a == 0);
+                self.registers.set_flag(FLAG_H, false);
+                self.registers.set_flag(FLAG_PV, Self::parity(a));
+                self.registers.set_flag(FLAG_C, new_carry);
+                self.registers.a = a;
+                4
+            }, // DAA
+
+            // Jump relative if Zero flag is set (Z): PC+2 + e if Z = 1
+            0x28 => {
+                let e = self.fetch_byte(memory) as i8;
+                if self.registers.get_flag(FLAG_Z) {
+                    self.registers.pc = self.registers.pc.wrapping_add(e as u16);
+                    12
+                } else {
+                    7
+                }
+            }, // JR Z, e
+
+            // Add 16-bit register pair HL to HL (double HL), setting H and C flags
+            0x29 => {
+                let hl = self.registers.get_hl();
+                let (result, carry) = hl.overflowing_add(hl);
+                let half_carry = ((hl & 0x0FFF) + (hl & 0x0FFF)) > 0x0FFF;
+                self.registers.set_hl(result);
+                self.registers.set_flag(FLAG_H, half_carry);
+                self.registers.set_flag(FLAG_N, false);
+                self.registers.set_flag(FLAG_C, carry);
+                11
+            }, // ADD HL, HL
+
+            // Load HL from memory at address nn (little-endian: L from nn, H from nn+1)
+            0x2A => {
+                let nn = self.fetch_word(memory);
+                let low = memory.read(nn);
+                let high = memory.read(nn.wrapping_add(1));
+                self.registers.set_hl((high as u16) << 8 | low as u16);
+                16
+            }, // LD HL, (nn)
+
+            // Increment register L, setting S, Z, H, PV flags (N reset, C unaffected)
+            0x2C => { self.registers.l = self.inc_8bit(self.registers.l); 4 }, // INC L
+
+            // Decrement register L, setting S, Z, H, PV flags (N set, C unaffected)
+            0x2D => { self.registers.l = self.dec_8bit(self.registers.l); 4 }, // DEC L
+
+            // Load register L with immediate 8-bit value n from memory (PC+1)
+            0x2E => { let n = self.fetch_byte(memory); self.registers.l = n; 7 }, // LD L, n
+
+            // Complement Accumulator: Invert all bits of A, set H and N flags
+            0x2F => {
+                self.registers.a = !self.registers.a;
+                self.registers.set_flag(FLAG_H, true);
+                self.registers.set_flag(FLAG_N, true);
+                4
+            }, // CPL
+
+            // Jump relative if Carry flag is reset (NC): PC+2 + e if C = 0
+            0x30 => {
+                let e = self.fetch_byte(memory) as i8;
+                if !self.registers.get_flag(FLAG_C) {
+                    self.registers.pc = self.registers.pc.wrapping_add(e as u16);
+                    12
+                } else {
+                    7
+                }
+            }, // JR NC, e
+
+            // Load Stack Pointer with immediate 16-bit value nn from memory (PC+1, PC+2)
             0x31 => { self.registers.sp = self.fetch_word(memory); 10 }, // LD SP, nn
-            0x32 => { // LD (nn), A
+
+            // Store accumulator A to memory at address nn (PC+1, PC+2)
+            0x32 => {
                 let nn = self.fetch_word(memory);
                 memory.write(nn, self.registers.a);
                 13
-            },
+            }, // LD (nn), A
+
+            // Increment value at (HL), setting S, Z, H, PV flags (N reset, C unaffected)
+            0x34 => {
+                let hl = self.registers.get_hl();
+                let value = memory.read(hl);
+                let new_value = self.inc_8bit(value);
+                memory.write(hl, new_value);
+                11
+            }, // INC (HL)
+
+            // Decrement value at (HL), setting S, Z, H, PV flags (N set, C unaffected)
+            0x35 => {
+                let hl = self.registers.get_hl();
+                let value = memory.read(hl);
+                let new_value = self.dec_8bit(value);
+                memory.write(hl, new_value);
+                11
+            }, // DEC (HL)
+
+            // Load memory at (HL) with immediate 8-bit value n from memory (PC+1)
+            0x36 => {
+                let n = self.fetch_byte(memory);
+                let hl = self.registers.get_hl();
+                memory.write(hl, n);
+                10
+            }, // LD (HL), n
+
+            // Set Carry Flag: C flag set, H and N flags reset
+            0x37 => {
+                self.registers.set_flag(FLAG_H, false);
+                self.registers.set_flag(FLAG_N, false);
+                self.registers.set_flag(FLAG_C, true);
+                4
+            }, // SCF
+
+            // Jump relative if Carry flag is set (C): PC+2 + e if C = 1
+            0x38 => {
+                let e = self.fetch_byte(memory) as i8;
+                if self.registers.get_flag(FLAG_C) {
+                    self.registers.pc = self.registers.pc.wrapping_add(e as u16);
+                    12
+                } else {
+                    7
+                }
+            }, // JR C, e
+
+            // Add 16-bit register pair DE to HL, setting H and C flags
+            0x39 => {
+                let hl = self.registers.get_hl();
+                let de = self.registers.get_de();
+                let (result, carry) = hl.overflowing_add(de);
+                let half_carry = ((hl & 0x0FFF) + (de & 0x0FFF)) > 0x0FFF;
+                self.registers.set_hl(result);
+                self.registers.set_flag(FLAG_H, half_carry);
+                self.registers.set_flag(FLAG_N, false);
+                self.registers.set_flag(FLAG_C, carry);
+                11
+            }, // ADD HL, DE
+
+            // Load accumulator A from memory at address nn (PC+1, PC+2)
+            0x3A => {
+                let nn = self.fetch_word(memory);
+                self.registers.a = memory.read(nn);
+                13
+            }, // LD A, (nn)
+
+            // Increment register A, setting S, Z, H, PV flags (N reset, C unaffected)
+            0x3C => { self.registers.a = self.inc_8bit(self.registers.a); 4 }, // INC A
+
+            // Decrement register A, setting S, Z, H, PV flags (N set, C unaffected)
+            0x3D => { self.registers.a = self.dec_8bit(self.registers.a); 4 }, // DEC A
+
+            // Load register A with immediate 8-bit value n from memory (PC+1)
             0x3E => { self.registers.a = self.fetch_byte(memory); 7 }, // LD A, n
-            0x47 => { self.registers.b = self.registers.a; 4 }, // LD B, A
-            0x76 => { self.halted = true; 4 }, // HALT
+
+            // Complement Carry Flag: Invert C flag, set H to old C, N reset
+            0x3F => {
+                let carry = self.registers.get_flag(FLAG_C);
+                self.registers.set_flag(FLAG_H, carry);
+                self.registers.set_flag(FLAG_N, false);
+                self.registers.set_flag(FLAG_C, !carry);
+                4
+            }, // CCF
+
+            // Load register-to-register or memory at (HL): 0x40-0x7F except 0x76 (HALT)
+            0x40..=0x7F => {
+                if opcode == 0x76 {
+                    self.halted = true;
+                    4 // HALT: Halt CPU until interrupt
+                } else {
+                    let dest = (opcode >> 3) & 0x07; // Bits 3-5: destination register
+                    let src = opcode & 0x07;          // Bits 0-2: source register
+                    let value = self.get_register(src, memory);
+                    self.set_register(dest, value, memory);
+                    if dest == 6 || src == 6 {
+                        7 // Memory access via (HL) takes 7 cycles
+                    } else {
+                        4 // Register-to-register takes 4 cycles
+                    }
+                }
+            },
+
+            // Add register or (HL) to A, setting all flags (H for carry from bit 3)
             0x80..=0x87 => self.add_a_r(self.get_register(opcode & 0x07, memory)), // ADD A, r
+
+            // Add register or (HL) plus Carry to A, setting all flags
+            0x88..=0x8F => {
+                let r = self.get_register(opcode & 0x07, memory);
+                self.adc_a_r(r);
+                if (opcode & 0x07) == 6 { 7 } else { 4 } // (HL) takes 7, others 4 cycles
+            }, // ADC A, r
+
+            // Subtract register or (HL) from A, setting all flags (H for borrow)
             0x90..=0x97 => self.sub_a_r(self.get_register(opcode & 0x07, memory)), // SUB r
+
+            // Subtract register or (HL) plus Carry from A, setting all flags
+            0x98..=0x9F => {
+                let r = self.get_register(opcode & 0x07, memory);
+                self.sbc_a_r(r);
+                if (opcode & 0x07) == 6 { 7 } else { 4 } // (HL) takes 7, others 4 cycles
+            }, // SBC A, r
+
+            // Bitwise AND of register or (HL) with A, setting S, Z, H, PV (N/C reset)
+            0xA0..=0xA7 => {
+                let r = self.get_register(opcode & 0x07, memory);
+                self.and_a_r(r);
+                if (opcode & 0x07) == 6 { 7 } else { 4 } // (HL) takes 7, others 4 cycles
+            }, // AND r
+
+            // Bitwise XOR of register or (HL) with A, setting S, Z, PV (H/N/C reset)
+            0xA8..=0xAF => {
+                let r = self.get_register(opcode & 0x07, memory);
+                self.xor_a_r(r);
+                if (opcode & 0x07) == 6 { 7 } else { 4 } // (HL) takes 7, others 4 cycles
+            }, // XOR r
+
+            // Bitwise OR of register or (HL) with A, setting S, Z, PV (H/N/C reset)
+            0xB0..=0xB7 => {
+                let r = self.get_register(opcode & 0x07, memory);
+                self.or_a_r(r);
+                if (opcode & 0x07) == 6 { 7 } else { 4 } // (HL) takes 7, others 4 cycles
+            }, // OR r
+
+            // Compare register or (HL) with A (A - r), setting all flags, A unchanged
+            0xB8..=0xBF => {
+                let r = self.get_register(opcode & 0x07, memory);
+                let a = self.registers.a;
+                let result = a.wrapping_sub(r);
+                let half_carry = (a & 0x0F) < (r & 0x0F);
+                let overflow = ((a ^ r) & 0x80 != 0) && ((a ^ result) & 0x80 != 0);
+                let carry = a < r;
+                self.registers.set_flag(FLAG_S, result & 0x80 != 0);
+                self.registers.set_flag(FLAG_Z, result == 0);
+                self.registers.set_flag(FLAG_H, half_carry);
+                self.registers.set_flag(FLAG_PV, overflow);
+                self.registers.set_flag(FLAG_N, true);
+                self.registers.set_flag(FLAG_C, carry);
+                if (opcode & 0x07) == 6 { 7 } else { 4 } // (HL) takes 7, others 4 cycles
+            }, // CP r
+
+            // Pop BC from stack: C from (SP), B from (SP+1), then SP += 2
+            0xC1 => {
+                self.registers.c = memory.read(self.registers.sp);
+                self.registers.b = memory.read(self.registers.sp + 1);
+                self.registers.sp = self.registers.sp.wrapping_add(2);
+                10
+            }, // POP BC
+
+            // Jump if Zero flag is reset (NZ): PC = nn if Z = 0 (always 10 cycles)
+            0xC2 => {
+                let nn = self.fetch_word(memory);
+                if !self.registers.get_flag(FLAG_Z) {
+                    self.registers.pc = nn;
+                }
+                10
+            }, // JP NZ, nn
+
+            // Jump absolute: Set PC to 16-bit address nn from memory (PC+1, PC+2)
             0xC3 => { self.registers.pc = self.fetch_word(memory); 10 }, // JP nn
-            0xC5 => { // PUSH BC
+
+            // Call subroutine if Zero flag is reset (NZ): Push PC, PC = nn if Z = 0
+            0xC4 => {
+                let nn = self.fetch_word(memory);
+                if !self.registers.get_flag(FLAG_Z) {
+                    self.push_pc(memory);
+                    self.registers.pc = nn;
+                    17
+                } else {
+                    10
+                }
+            }, // CALL NZ, nn
+
+            // Push BC to stack: SP -= 2, (SP+1) = B, (SP) = C
+            0xC5 => {
                 self.registers.sp = self.registers.sp.wrapping_sub(2);
                 memory.write(self.registers.sp + 1, self.registers.b);
                 memory.write(self.registers.sp, self.registers.c);
-                10
-            },
-            0xC6 => { // ADD A, n
+                11 // Note: Corrected to 11 cycles per Z80 manual
+            }, // PUSH BC
+
+            // Add immediate value n to A, setting all flags
+            0xC6 => {
                 let n = self.fetch_byte(memory);
                 self.add_a_r(n);
                 7 // Clock cycles for ADD A, n
-            },
-            0xCA => { // JP Z, nn
+            }, // ADD A, n
+
+            // Restart at 0x00: Push PC, set PC to 0x0000
+            0xC7 => {
+                self.push_pc(memory);
+                self.registers.pc = 0x0000;
+                11
+            }, // RST 00H
+
+            // Return if Zero flag is reset (NZ): Pop PC if Z = 0
+            0xC0 => {
+                if !self.registers.get_flag(FLAG_Z) {
+                    self.pop_pc(memory);
+                    11
+                } else {
+                    5
+                }
+            }, // RET NZ
+
+            // Pop HL from stack: L from (SP), H from (SP+1), then SP += 2
+            0xE1 => {
+                self.registers.l = memory.read(self.registers.sp);
+                self.registers.h = memory.read(self.registers.sp + 1);
+                self.registers.sp = self.registers.sp.wrapping_add(2);
+                10
+            }, // POP HL
+
+            // Jump if Zero flag is set (Z): PC = nn if Z = 1 (always 10 cycles)
+            0xCA => {
                 let nn = self.fetch_word(memory);
                 if self.registers.get_flag(FLAG_Z) {
                     self.registers.pc = nn;
                 }
                 10
-            },
-            0xCD => { // CALL nn
+            }, // JP Z, nn
+
+            // CB prefix: Fetch next byte and execute bit operation
+            0xCB => { let cb_opcode = self.fetch_byte(memory); self.execute_cb(cb_opcode, memory) },
+
+            // Call subroutine if Zero flag is set (Z): Push PC, PC = nn if Z = 1
+            0xCC => {
+                let nn = self.fetch_word(memory);
+                if self.registers.get_flag(FLAG_Z) {
+                    self.push_pc(memory);
+                    self.registers.pc = nn;
+                    17
+                } else {
+                    10
+                }
+            }, // CALL Z, nn
+
+            // Call subroutine: Push PC, set PC to nn
+            0xCD => {
                 let nn = self.fetch_word(memory);
                 self.push_pc(memory);
                 self.registers.pc = nn;
                 17
-            },
+            }, // CALL nn
+
+            // Add immediate value n plus Carry to A, setting all flags
+            0xCE => {
+                let n = self.fetch_byte(memory);
+                self.adc_a_r(n);
+                7
+            }, // ADC A, n
+
+            // Restart at 0x08: Push PC, set PC to 0x0008
+            0xCF => {
+                self.push_pc(memory);
+                self.registers.pc = 0x0008;
+                11
+            }, // RST 08H
+
+            // Return if Zero flag is set (Z): Pop PC if Z = 1
+            0xC8 => {
+                if self.registers.get_flag(FLAG_Z) {
+                    self.pop_pc(memory);
+                    11
+                } else {
+                    5
+                }
+            }, // RET Z
+
+            // Return: Pop PC from stack
             0xC9 => { self.pop_pc(memory); 10 }, // RET
-            0xCB => { let cb_opcode = self.fetch_byte(memory); self.execute_cb(cb_opcode, memory) },
-            0xD1 => { // POP DE
+
+            // Jump if Carry flag is reset (NC): PC = nn if C = 0
+            0xD2 => {
+                let nn = self.fetch_word(memory);
+                if !self.registers.get_flag(FLAG_C) {
+                    self.registers.pc = nn;
+                }
+                10
+            }, // JP NC, nn
+
+            // Output A to port n: Port address from (PC+1)
+            0xD3 => {
+                let n = self.fetch_byte(memory); // Get the port number from memory
+                io.write(n as u16, self.registers.a); // Write A's value to the port
+                11 // Return the number of clock cycles
+            }, // OUT (n), A
+
+            // Call subroutine if Carry flag is reset (NC): Push PC, PC = nn if C = 0
+            0xD4 => {
+                let nn = self.fetch_word(memory);
+                if !self.registers.get_flag(FLAG_C) {
+                    self.push_pc(memory);
+                    self.registers.pc = nn;
+                    17
+                } else {
+                    10
+                }
+            }, // CALL NC, nn
+
+            // Push DE to stack: SP -= 2, (SP+1) = D, (SP) = E
+            0xD5 => {
+                self.registers.sp = self.registers.sp.wrapping_sub(2);
+                memory.write(self.registers.sp + 1, self.registers.d);
+                memory.write(self.registers.sp, self.registers.e);
+                11
+            }, // PUSH DE
+
+            // Subtract immediate value n from A, setting all flags
+            0xD6 => {
+                let n = self.fetch_byte(memory);
+                self.sub_a_r(n);
+                7 // Clock cycles for SUB n
+            }, // SUB n
+
+            // Restart at 0x10: Push PC, set PC to 0x0010
+            0xD7 => {
+                self.push_pc(memory);
+                self.registers.pc = 0x0010;
+                11
+            }, // RST 10H
+
+            // Return if Carry flag is reset (NC): Pop PC if C = 0
+            0xD0 => {
+                if !self.registers.get_flag(FLAG_C) {
+                    self.pop_pc(memory);
+                    11
+                } else {
+                    5
+                }
+            }, // RET NC
+
+            // Pop DE from stack: E from (SP), D from (SP+1), then SP += 2
+            0xD1 => {
                 self.registers.e = memory.read(self.registers.sp);
                 self.registers.d = memory.read(self.registers.sp + 1);
                 self.registers.sp = self.registers.sp.wrapping_add(2);
                 10
-            },
-            0xD3 => { // OUT (n), A
-                let n = self.fetch_byte(memory); // Get the port number from memory
-                io.write(n as u16, self.registers.a); // Write A's value to the port
-                11 // Return the number of clock cycles
-            },
-            0xD6 => { // SUB n
-                let n = self.fetch_byte(memory);
-                self.sub_a_r(n);
-                7 // Clock cycles for SUB n
-            },
-            0xDB => { // IN A, (n)
+            }, // POP DE
+
+            // Jump if Carry flag is set (C): PC = nn if C = 1
+            0xDA => {
+                let nn = self.fetch_word(memory);
+                if self.registers.get_flag(FLAG_C) {
+                    self.registers.pc = nn;
+                }
+                10
+            }, // JP C, nn
+
+            // Input from port n to A: Port address from (PC+1)
+            0xDB => {
                 let n = self.fetch_byte(memory);
                 self.registers.a = io.read(n as u16);
                 11
-            },
+            }, // IN A, (n)
+
+            // Call subroutine if Carry flag is set (C): Push PC, PC = nn if C = 1
+            0xDC => {
+                let nn = self.fetch_word(memory);
+                if self.registers.get_flag(FLAG_C) {
+                    self.push_pc(memory);
+                    self.registers.pc = nn;
+                    17
+                } else {
+                    10
+                }
+            }, // CALL C, nn
+
+            // DD prefix: Fetch next byte and execute IX-related instruction
             0xDD => { let dd_opcode = self.fetch_byte(memory); self.execute_dd(dd_opcode, memory, io) },
-            0xED => { let ed_opcode = self.fetch_byte(memory); self.execute_ed(ed_opcode, memory, io) },
+
+            // Subtract immediate value n plus Carry from A, setting all flags
+            0xDE => {
+                let n = self.fetch_byte(memory);
+                self.sbc_a_r(n);
+                7
+            }, // SBC A, n
+
+            // Restart at 0x18: Push PC, set PC to 0x0018
+            0xDF => {
+                self.push_pc(memory);
+                self.registers.pc = 0x0018;
+                11
+            }, // RST 18H
+
+            // Return if Carry flag is set (C): Pop PC if C = 1
+            0xD8 => {
+                if self.registers.get_flag(FLAG_C) {
+                    self.pop_pc(memory);
+                    11
+                } else {
+                    5
+                }
+            }, // RET C
+
+            // Exchange DE with HL: Swap register pairs
+            0xEB => {
+                let temp_d = self.registers.d;
+                let temp_e = self.registers.e;
+                self.registers.d = self.registers.h;
+                self.registers.e = self.registers.l;
+                self.registers.h = temp_d;
+                self.registers.l = temp_e;
+                4
+            }, // EX DE, HL
+
+            // Jump if Parity Odd (PO): PC = nn if PV = 0
+            0xE2 => {
+                let nn = self.fetch_word(memory);
+                if !self.registers.get_flag(FLAG_PV) {
+                    self.registers.pc = nn;
+                }
+                10
+            }, // JP PO, nn
+
+            // Jump indirect via HL: PC = HL
+            0xE9 => {
+                self.registers.pc = self.registers.get_hl();
+                4
+            }, // JP (HL)
+
+            // Call subroutine if Parity Odd (PO): Push PC, PC = nn if PV = 0
+            0xE4 => {
+                let nn = self.fetch_word(memory);
+                if !self.registers.get_flag(FLAG_PV) {
+                    self.push_pc(memory);
+                    self.registers.pc = nn;
+                    17
+                } else {
+                    10
+                }
+            }, // CALL PO, nn
+
+            // Push HL to stack: SP -= 2, (SP+1) = H, (SP) = L
+            0xE5 => {
+                self.registers.sp = self.registers.sp.wrapping_sub(2);
+                memory.write(self.registers.sp + 1, self.registers.h);
+                memory.write(self.registers.sp, self.registers.l);
+                11
+            }, // PUSH HL
+
+            // Bitwise AND of immediate n with A, setting S, Z, H, PV (N/C reset)
+            0xE6 => {
+                let n = self.fetch_byte(memory);
+                self.and_a_r(n);
+                7
+            }, // AND n
+
+            // Restart at 0x20: Push PC, set PC to 0x0020
+            0xE7 => {
+                self.push_pc(memory);
+                self.registers.pc = 0x0020;
+                11
+            }, // RST 20H
+
+            // Return if Parity Odd (PO): Pop PC if PV = 0
+            0xE0 => {
+                if !self.registers.get_flag(FLAG_PV) {
+                    self.pop_pc(memory);
+                    11
+                } else {
+                    5
+                }
+            }, // RET PO
+
+            // Exchange (SP) with HL: Swap HL with top of stack
+            0xE3 => {
+                let low = memory.read(self.registers.sp);
+                let high = memory.read(self.registers.sp + 1);
+                memory.write(self.registers.sp, self.registers.l);
+                memory.write(self.registers.sp + 1, self.registers.h);
+                self.registers.l = low;
+                self.registers.h = high;
+                19
+            }, // EX (SP), HL
+
+            // Jump if Parity Even (PE): PC = nn if PV = 1
+            0xEA => {
+                let nn = self.fetch_word(memory);
+                if self.registers.get_flag(FLAG_PV) {
+                    self.registers.pc = nn;
+                }
+                10
+            }, // JP PE, nn
+
+            // Bitwise XOR of immediate n with A, setting S, Z, PV (H/N/C reset)
+            0xEE => {
+                let n = self.fetch_byte(memory);
+                self.xor_a_r(n);
+                7
+            }, // XOR n
+
+            // Restart at 0x28: Push PC, set PC to 0x0028
+            0xEF => {
+                self.push_pc(memory);
+                self.registers.pc = 0x0028;
+                11
+            }, // RST 28H
+
+            // Return if Parity Even (PE): Pop PC if PV = 1
+            0xE8 => {
+                if self.registers.get_flag(FLAG_PV) {
+                    self.pop_pc(memory);
+                    11
+                } else {
+                    5
+                }
+            }, // RET PE
+
+            // Call subroutine if Parity Even (PE): Push PC, PC = nn if PV = 1
+            0xEC => {
+                let nn = self.fetch_word(memory);
+                if self.registers.get_flag(FLAG_PV) {
+                    self.push_pc(memory);
+                    self.registers.pc = nn;
+                    17
+                } else {
+                    10
+                }
+            }, // CALL PE, nn
+
+            // Pop AF from stack: F from (SP), A from (SP+1), then SP += 2
+            0xF1 => {
+                self.registers.f = memory.read(self.registers.sp);
+                self.registers.a = memory.read(self.registers.sp + 1);
+                self.registers.sp = self.registers.sp.wrapping_add(2);
+                10
+            }, // POP AF
+
+            // Jump if Positive (P): PC = nn if S = 0
+            0xF2 => {
+                let nn = self.fetch_word(memory);
+                if !self.registers.get_flag(FLAG_S) {
+                    self.registers.pc = nn;
+                }
+                10
+            }, // JP P, nn
+
+            // Disable Interrupts: Clear both interrupt flip-flops
+            0xF3 => {
+                self.iff1 = false;
+                self.iff2 = false;
+                4
+            }, // DI
+
+            // Call subroutine if Positive (P): Push PC, PC = nn if S = 0
+            0xF4 => {
+                let nn = self.fetch_word(memory);
+                if !self.registers.get_flag(FLAG_S) {
+                    self.push_pc(memory);
+                    self.registers.pc = nn;
+                    17
+                } else {
+                    10
+                }
+            }, // CALL P, nn
+
+            // Push AF to stack: SP -= 2, (SP+1) = A, (SP) = F
+            0xF5 => {
+                self.registers.sp = self.registers.sp.wrapping_sub(2);
+                memory.write(self.registers.sp + 1, self.registers.a);
+                memory.write(self.registers.sp, self.registers.f);
+                11
+            }, // PUSH AF
+
+            // Bitwise OR of immediate n with A, setting S, Z, PV (H/N/C reset)
+            0xF6 => {
+                let n = self.fetch_byte(memory);
+                self.or_a_r(n);
+                7
+            }, // OR n
+
+            // Restart at 0x30: Push PC, set PC to 0x0030
+            0xF7 => {
+                self.push_pc(memory);
+                self.registers.pc = 0x0030;
+                11
+            }, // RST 30H
+
+            // Return if Positive (P): Pop PC if S = 0
+            0xF0 => {
+                if !self.registers.get_flag(FLAG_S) {
+                    self.pop_pc(memory);
+                    11
+                } else {
+                    5
+                }
+            }, // RET P
+
+            // Load SP with HL: SP = HL
+            0xF9 => { // Note: Overlaps with ADD HL, SP; corrected below
+                self.registers.sp = self.registers.get_hl();
+                6
+            }, // LD SP, HL
+            
+            // Jump if Minus (M): PC = nn if S = 1
+            0xFA => {
+                let nn = self.fetch_word(memory);
+                if self.registers.get_flag(FLAG_S) {
+                    self.registers.pc = nn;
+                }
+                10
+            }, // JP M, nn
+
+            // Call subroutine if Minus (M): Push PC, PC = nn if S = 1
+            0xFC => {
+                let nn = self.fetch_word(memory);
+                if self.registers.get_flag(FLAG_S) {
+                    self.push_pc(memory);
+                    self.registers.pc = nn;
+                    17
+                } else {
+                    10
+                }
+            }, // CALL M, nn
+
+            // Enable Interrupts: Set both interrupt flip-flops after next instruction
             0xFB => { self.iff1 = true; self.iff2 = true; 4 }, // EI
+
+            // Compare immediate n with A (A - n), setting all flags, A unchanged
+            0xFE => {
+                let n = self.fetch_byte(memory);
+                let a = self.registers.a;
+                let result = a.wrapping_sub(n);
+                let half_carry = (a & 0x0F) < (n & 0x0F);
+                let overflow = ((a ^ n) & 0x80 != 0) && ((a ^ result) & 0x80 != 0);
+                let carry = a < n;
+                self.registers.set_flag(FLAG_S, result & 0x80 != 0);
+                self.registers.set_flag(FLAG_Z, result == 0);
+                self.registers.set_flag(FLAG_H, half_carry);
+                self.registers.set_flag(FLAG_PV, overflow);
+                self.registers.set_flag(FLAG_N, true);
+                self.registers.set_flag(FLAG_C, carry);
+                7
+            }, // CP n
+
+            // Restart at 0x38: Push PC, set PC to 0x0038
+            0xFF => {
+                self.push_pc(memory);
+                self.registers.pc = 0x0038;
+                11
+            }, // RST 38H
+
+            // Return if Minus (M): Pop PC if S = 1
+            0xF8 => {
+                if self.registers.get_flag(FLAG_S) {
+                    self.pop_pc(memory);
+                    11
+                } else {
+                    5
+                }
+            }, // RET M
+
+            // FD prefix: Fetch next byte and execute IY-related instruction
             0xFD => { let fd_opcode = self.fetch_byte(memory); self.execute_fd(fd_opcode, memory, io) },
+
+            // ED prefix: Fetch next byte and execute extended instruction
+            0xED => { let ed_opcode = self.fetch_byte(memory); self.execute_ed(ed_opcode, memory, io) },
+
+            // Unimplemented opcodes trigger a panic with the opcode value
             _ => unimplemented!("Opcode {:#04x} not implemented", opcode),
         }
     }
@@ -453,6 +1346,95 @@ impl Z80 {
     /// Computes parity (true if even number of 1 bits).
     fn parity(value: u8) -> bool {
         value.count_ones() % 2 == 0
+    }
+
+    fn inc_8bit(&mut self, value: u8) -> u8 {
+        let result = value.wrapping_add(1);
+        let half_carry = (value & 0x0F) == 0x0F;
+        let overflow = value == 0x7F;
+        self.registers.set_flag(FLAG_S, result & 0x80 != 0);
+        self.registers.set_flag(FLAG_Z, result == 0);
+        self.registers.set_flag(FLAG_H, half_carry);
+        self.registers.set_flag(FLAG_PV, overflow);
+        self.registers.set_flag(FLAG_N, false);
+        result
+    }
+
+    fn dec_8bit(&mut self, value: u8) -> u8 {
+        let result = value.wrapping_sub(1);
+        let half_carry = (value & 0x0F) == 0;
+        let overflow = value == 0x80;
+        self.registers.set_flag(FLAG_S, result & 0x80 != 0);
+        self.registers.set_flag(FLAG_Z, result == 0);
+        self.registers.set_flag(FLAG_H, half_carry);
+        self.registers.set_flag(FLAG_PV, overflow);
+        self.registers.set_flag(FLAG_N, true);
+        result
+    }
+
+    fn adc_a_r(&mut self, r: u8) {
+        let a = self.registers.a;
+        let carry = if self.registers.get_flag(FLAG_C) { 1 } else { 0 };
+        let result = a.wrapping_add(r).wrapping_add(carry);
+        let half_carry = (a & 0x0F) + (r & 0x0F) + carry > 0x0F;
+        let overflow = ((a ^ r) & 0x80 != 0) && ((a ^ result) & 0x80 != 0);
+        let carry_out = (a as u16) + (r as u16) + (carry as u16) > 0xFF;
+        self.registers.a = result;
+        self.registers.set_flag(FLAG_S, result & 0x80 != 0);
+        self.registers.set_flag(FLAG_Z, result == 0);
+        self.registers.set_flag(FLAG_H, half_carry);
+        self.registers.set_flag(FLAG_PV, overflow);
+        self.registers.set_flag(FLAG_N, false);
+        self.registers.set_flag(FLAG_C, carry_out);
+    }
+
+    fn sbc_a_r(&mut self, r: u8) {
+        let a = self.registers.a;
+        let carry = if self.registers.get_flag(FLAG_C) { 1 } else { 0 };
+        let result = a.wrapping_sub(r).wrapping_sub(carry);
+        let half_carry = (a & 0x0F) < (r & 0x0F) + carry;
+        let overflow = ((a ^ r) & 0x80 != 0) && ((a ^ result) & 0x80 != 0);
+        let carry_out = (a as u16) < (r as u16) + (carry as u16);
+        self.registers.a = result;
+        self.registers.set_flag(FLAG_S, result & 0x80 != 0);
+        self.registers.set_flag(FLAG_Z, result == 0);
+        self.registers.set_flag(FLAG_H, half_carry);
+        self.registers.set_flag(FLAG_PV, overflow);
+        self.registers.set_flag(FLAG_N, true);
+        self.registers.set_flag(FLAG_C, carry_out);
+    }
+
+    fn and_a_r(&mut self, r: u8) {
+        self.registers.a &= r;
+        let result = self.registers.a;
+        self.registers.set_flag(FLAG_S, result & 0x80 != 0);
+        self.registers.set_flag(FLAG_Z, result == 0);
+        self.registers.set_flag(FLAG_H, true);
+        self.registers.set_flag(FLAG_PV, Self::parity(result));
+        self.registers.set_flag(FLAG_N, false);
+        self.registers.set_flag(FLAG_C, false);
+    }
+
+    fn xor_a_r(&mut self, r: u8) {
+        self.registers.a ^= r;
+        let result = self.registers.a;
+        self.registers.set_flag(FLAG_S, result & 0x80 != 0);
+        self.registers.set_flag(FLAG_Z, result == 0);
+        self.registers.set_flag(FLAG_H, false);
+        self.registers.set_flag(FLAG_PV, Self::parity(result));
+        self.registers.set_flag(FLAG_N, false);
+        self.registers.set_flag(FLAG_C, false);
+    }
+
+    fn or_a_r(&mut self, r: u8) {
+        self.registers.a |= r;
+        let result = self.registers.a;
+        self.registers.set_flag(FLAG_S, result & 0x80 != 0);
+        self.registers.set_flag(FLAG_Z, result == 0);
+        self.registers.set_flag(FLAG_H, false);
+        self.registers.set_flag(FLAG_PV, Self::parity(result));
+        self.registers.set_flag(FLAG_N, false);
+        self.registers.set_flag(FLAG_C, false);
     }
 
     /// Triggers a Non-Maskable Interrupt (NMI).
