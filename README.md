@@ -1,5 +1,7 @@
 # z80_emulator - Zilog Z80 'z80' CPU Core in Rust
 
+## Zilog Z80 CPU Emulation in Rust
+
 `rust-z80` is a cycle-accurate emulator of the Zilog Z80 microprocessor, written in Rust. It aims to faithfully replicate the behavior of the original Z80 CPU, as found in classic systems like the ZX Spectrum, Amstrad CPC, and arcade machines. This project is ideal for retrocomputing enthusiasts, emulator developers, and anyone interested in low-level programming with Rust.
 
 ## Features
